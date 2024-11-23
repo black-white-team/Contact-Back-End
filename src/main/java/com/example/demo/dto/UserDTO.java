@@ -12,6 +12,7 @@ import java.util.List;
 public class UserDTO {
     private Long id;
     private String username;
+    private Boolean bookmark; // 新增收藏字段
     private List<PhoneNumber> phoneNumbers;
     private List<EmailAddress> emailAddresses;
     private List<SocialMediaHandle> socialMediaHandles;

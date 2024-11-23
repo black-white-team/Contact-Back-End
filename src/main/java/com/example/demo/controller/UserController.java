@@ -1,3 +1,4 @@
+// UserController.java
 package com.example.demo.controller;
 
 import cn.hutool.core.util.StrUtil;
@@ -46,6 +47,7 @@ public class UserController {
         // 创建用户
         User user = new User();
         user.setUsername(userDTO.getUsername());
+        user.setBookmark(false); // 默认设置为未收藏
         userMapper.insert(user);
 
         // 获取生成的用户ID
@@ -94,6 +96,7 @@ public class UserController {
         User user = new User();
         user.setId(id);
         user.setUsername(userDTO.getUsername());
+        user.setBookmark(userDTO.getBookmark()); // 更新收藏状态
         userMapper.updateById(user);
 
         // 删除旧的联系方式
@@ -171,6 +174,7 @@ public class UserController {
             UserDTO dto = new UserDTO();
             dto.setId(user.getId());
             dto.setUsername(user.getUsername());
+            dto.setBookmark(user.getBookmark());
 
             // 查询并设置电话号码
             List<PhoneNumber> phoneNumbers = phoneNumberMapper.selectList(
@@ -212,6 +216,7 @@ public class UserController {
             UserDTO dto = new UserDTO();
             dto.setId(user.getId());
             dto.setUsername(user.getUsername());
+            dto.setBookmark(user.getBookmark());
 
             // 设置电话号码
             List<PhoneNumber> phoneNumbers = phoneNumberMapper.selectList(
@@ -241,6 +246,8 @@ public class UserController {
             UserExcel excel = new UserExcel();
             excel.setId(dto.getId());
             excel.setUsername(dto.getUsername());
+            excel.setBookmark(dto.getBookmark()); // 添加收藏状态到Excel
+
             excel.setPhoneNumbers(dto.getPhoneNumbers().stream()
                     .map(p -> p.getType() + ": " + p.getNumber())
                     .collect(Collectors.joining(", ")));
@@ -282,6 +289,7 @@ public class UserController {
             // 创建用户
             User user = new User();
             user.setUsername(excel.getUsername());
+            user.setBookmark(excel.getBookmark()); // 设置收藏状态
             userMapper.insert(user);
             Long userId = user.getId();
 
@@ -347,5 +355,66 @@ public class UserController {
         }
 
         return Result.success();
+    }
+
+    // 切换收藏状态
+    @PatchMapping("/favorite/{id}")
+    @Transactional
+    public Result<?> toggleFavorite(@PathVariable Long id) {
+        User user = userMapper.selectById(id);
+        if (user == null) {
+            return Result.error("400", "User not found");
+        }
+        user.setBookmark(!user.getBookmark()); // 切换收藏状态
+        userMapper.updateById(user);
+        return Result.success();
+    }
+
+    // 获取收藏的用户
+    @GetMapping("/favorites")
+    public Result<?> getFavorites(@RequestParam(defaultValue = "1") Integer pageNum,
+                                  @RequestParam(defaultValue = "10") Integer pageSize) {
+        LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<User>()
+                .eq(User::getBookmark, true); // 过滤 bookmark 字段为 true 的用户
+        Page<User> favoritePage = userMapper.selectPage(new Page<>(pageNum, pageSize), wrapper);
+
+        // 构建 UserDTO 列表
+        List<UserDTO> userDTOList = favoritePage.getRecords().stream().map(user -> {
+            UserDTO dto = new UserDTO();
+            dto.setId(user.getId());
+            dto.setUsername(user.getUsername());
+            dto.setBookmark(user.getBookmark());
+
+            // 查询并设置电话号码
+            List<PhoneNumber> phoneNumbers = phoneNumberMapper.selectList(
+                    new LambdaQueryWrapper<PhoneNumber>().eq(PhoneNumber::getUserId, user.getId()));
+            dto.setPhoneNumbers(phoneNumbers);
+
+            // 查询并设置电子邮件地址
+            List<EmailAddress> emailAddresses = emailAddressMapper.selectList(
+                    new LambdaQueryWrapper<EmailAddress>().eq(EmailAddress::getUserId, user.getId()));
+            dto.setEmailAddresses(emailAddresses);
+
+            // 查询并设置社交媒体账户
+            List<SocialMediaHandle> socialMediaHandles = socialMediaHandleMapper.selectList(
+                    new LambdaQueryWrapper<SocialMediaHandle>().eq(SocialMediaHandle::getUserId, user.getId()));
+            dto.setSocialMediaHandles(socialMediaHandles);
+
+            // 查询并设置物理地址
+            List<PhysicalAddress> physicalAddresses = physicalAddressMapper.selectList(
+                    new LambdaQueryWrapper<PhysicalAddress>().eq(PhysicalAddress::getUserId, user.getId()));
+            dto.setPhysicalAddresses(physicalAddresses);
+
+            return dto;
+        }).collect(Collectors.toList());
+
+        // 构建分页结果
+        Page<UserDTO> dtoPage = new Page<>();
+        dtoPage.setCurrent(favoritePage.getCurrent());
+        dtoPage.setSize(favoritePage.getSize());
+        dtoPage.setTotal(favoritePage.getTotal());
+        dtoPage.setRecords(userDTOList);
+
+        return Result.success(dtoPage);
     }
 }

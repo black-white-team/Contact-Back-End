@@ -13,5 +13,5 @@ public class User {
 
     private String username;
 
-    // 移除单一联系方式字段
+    private Boolean bookmark;
 }
