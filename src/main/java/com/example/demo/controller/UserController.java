@@ -8,6 +8,7 @@ import com.example.demo.common.Result;
 import com.example.demo.dto.UserDTO;
 import com.example.demo.entity.*;
 import com.example.demo.mapper.*;
+import com.example.demo.excel.UserExcel;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,6 +18,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.net.URLEncoder;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/user")
@@ -135,6 +137,22 @@ public class UserController {
         return Result.success();
     }
 
+    // 删除用户及其所有关联联系方式
+    @DeleteMapping("/{id}")
+    @Transactional
+    public Result<?> delete(@PathVariable Long id) {
+        // 删除用户基本信息
+        userMapper.deleteById(id);
+
+        // 删除用户的所有联系方式
+        phoneNumberMapper.delete(new LambdaQueryWrapper<PhoneNumber>().eq(PhoneNumber::getUserId, id));
+        emailAddressMapper.delete(new LambdaQueryWrapper<EmailAddress>().eq(EmailAddress::getUserId, id));
+        socialMediaHandleMapper.delete(new LambdaQueryWrapper<SocialMediaHandle>().eq(SocialMediaHandle::getUserId, id));
+        physicalAddressMapper.delete(new LambdaQueryWrapper<PhysicalAddress>().eq(PhysicalAddress::getUserId, id));
+
+        return Result.success();
+    }
+
     // 分页查询用户及其联系方式
     @GetMapping
     public Result<?> findPage(@RequestParam(defaultValue = "1") Integer pageNum,
@@ -175,7 +193,7 @@ public class UserController {
             dto.setPhysicalAddresses(physicalAddresses);
 
             return dto;
-        }).toList();
+        }).collect(Collectors.toList());
 
         // 构建分页结果
         Page<UserDTO> dtoPage = new Page<>();
@@ -216,7 +234,27 @@ public class UserController {
             dto.setPhysicalAddresses(physicalAddresses);
 
             return dto;
-        }).toList();
+        }).collect(Collectors.toList());
+
+        // 转换为 UserExcel
+        List<UserExcel> excelList = list.stream().map(dto -> {
+            UserExcel excel = new UserExcel();
+            excel.setId(dto.getId());
+            excel.setUsername(dto.getUsername());
+            excel.setPhoneNumbers(dto.getPhoneNumbers().stream()
+                    .map(p -> p.getType() + ": " + p.getNumber())
+                    .collect(Collectors.joining(", ")));
+            excel.setEmailAddresses(dto.getEmailAddresses().stream()
+                    .map(e -> e.getType() + ": " + e.getEmail())
+                    .collect(Collectors.joining(", ")));
+            excel.setSocialMediaHandles(dto.getSocialMediaHandles().stream()
+                    .map(s -> s.getPlatform() + ": " + s.getHandle())
+                    .collect(Collectors.joining(", ")));
+            excel.setPhysicalAddresses(dto.getPhysicalAddresses().stream()
+                    .map(a -> a.getType() + ": " + a.getAddress())
+                    .collect(Collectors.joining(", ")));
+            return excel;
+        }).collect(Collectors.toList());
 
         // 设置响应头
         response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
@@ -226,56 +264,84 @@ public class UserController {
         response.setHeader("Content-disposition", "attachment;filename*=utf-8''" + fileName + ".xlsx");
 
         // 写入Excel
-        EasyExcel.write(response.getOutputStream(), UserDTO.class)
+        EasyExcel.write(response.getOutputStream(), UserExcel.class)
                 .sheet("用户信息")
-                .doWrite(list);
+                .doWrite(excelList);
     }
 
     // 从 Excel 文件导入用户数据（包含联系方式）
     @PostMapping("/import")
     @Transactional
     public Result<?> importExcel(@RequestParam("file") MultipartFile file) throws IOException {
-        List<UserDTO> list = EasyExcel.read(file.getInputStream())
-                .head(UserDTO.class)
+        List<UserExcel> excelList = EasyExcel.read(file.getInputStream())
+                .head(UserExcel.class)
                 .sheet()
                 .doReadSync();
 
-        for (UserDTO dto : list) {
+        for (UserExcel excel : excelList) {
             // 创建用户
             User user = new User();
-            user.setUsername(dto.getUsername());
+            user.setUsername(excel.getUsername());
             userMapper.insert(user);
             Long userId = user.getId();
 
-            // 插入电话号码
-            if (dto.getPhoneNumbers() != null) {
-                for (PhoneNumber phone : dto.getPhoneNumbers()) {
-                    phone.setUserId(userId);
-                    phoneNumberMapper.insert(phone);
+            // 解析并插入电话号码
+            if (StrUtil.isNotBlank(excel.getPhoneNumbers())) {
+                String[] phones = excel.getPhoneNumbers().split(", ");
+                for (String phoneStr : phones) {
+                    String[] parts = phoneStr.split(": ");
+                    if (parts.length == 2) {
+                        PhoneNumber phone = new PhoneNumber();
+                        phone.setUserId(userId);
+                        phone.setType(parts[0]);
+                        phone.setNumber(parts[1]);
+                        phoneNumberMapper.insert(phone);
+                    }
                 }
             }
 
-            // 插入电子邮件地址
-            if (dto.getEmailAddresses() != null) {
-                for (EmailAddress email : dto.getEmailAddresses()) {
-                    email.setUserId(userId);
-                    emailAddressMapper.insert(email);
+            // 解析并插入电子邮件地址
+            if (StrUtil.isNotBlank(excel.getEmailAddresses())) {
+                String[] emails = excel.getEmailAddresses().split(", ");
+                for (String emailStr : emails) {
+                    String[] parts = emailStr.split(": ");
+                    if (parts.length == 2) {
+                        EmailAddress email = new EmailAddress();
+                        email.setUserId(userId);
+                        email.setType(parts[0]);
+                        email.setEmail(parts[1]);
+                        emailAddressMapper.insert(email);
+                    }
                 }
             }
 
-            // 插入社交媒体账户
-            if (dto.getSocialMediaHandles() != null) {
-                for (SocialMediaHandle social : dto.getSocialMediaHandles()) {
-                    social.setUserId(userId);
-                    socialMediaHandleMapper.insert(social);
+            // 解析并插入社交媒体账户
+            if (StrUtil.isNotBlank(excel.getSocialMediaHandles())) {
+                String[] socials = excel.getSocialMediaHandles().split(", ");
+                for (String socialStr : socials) {
+                    String[] parts = socialStr.split(": ");
+                    if (parts.length == 2) {
+                        SocialMediaHandle social = new SocialMediaHandle();
+                        social.setUserId(userId);
+                        social.setPlatform(parts[0]);
+                        social.setHandle(parts[1]);
+                        socialMediaHandleMapper.insert(social);
+                    }
                 }
             }
 
-            // 插入物理地址
-            if (dto.getPhysicalAddresses() != null) {
-                for (PhysicalAddress address : dto.getPhysicalAddresses()) {
-                    address.setUserId(userId);
-                    physicalAddressMapper.insert(address);
+            // 解析并插入物理地址
+            if (StrUtil.isNotBlank(excel.getPhysicalAddresses())) {
+                String[] addresses = excel.getPhysicalAddresses().split(", ");
+                for (String addressStr : addresses) {
+                    String[] parts = addressStr.split(": ");
+                    if (parts.length == 2) {
+                        PhysicalAddress address = new PhysicalAddress();
+                        address.setUserId(userId);
+                        address.setType(parts[0]);
+                        address.setAddress(parts[1]);
+                        physicalAddressMapper.insert(address);
+                    }
                 }
             }
         }
